@@ -4,9 +4,9 @@ from time import time
 
 import jwt
 from flask_login import UserMixin
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 
-from . import db, login, app
+from . import app, db, login
 
 followers = db.Table(
     'followers',
@@ -20,7 +20,7 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(64), index=True, unique=True)
     email = db.Column(db.String(120), index=True, unique=True)
     password_hash = db.Column(db.String(128))
-    posts = db.relationship("Post", backref="author", lazy='dynamic')
+    posts = db.relationship('Post', backref='author', lazy='dynamic')
     about_me = db.Column(db.String(140))
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     followed = db.relationship(
@@ -51,17 +51,19 @@ class User(UserMixin, db.Model):
             self.followed.remove(user)
 
     def is_following(self, user):
-        return self.followed.filter(followers.c.followed_id == user.id).count() > 0
+        return self.followed.filter(
+            followers.c.followed_id == user.id).count() > 0
 
     def followed_posts(self):
-        return Post.query.join(
+        followed = Post.query.join(
             followers, (followers.c.followed_id == Post.user_id)).filter(
-            followers.c.follower_id == self.id).order_by(
-            Post.timestamp.desc())
+            followers.c.follower_id == self.id)
+        own = Post.query.filter_by(user_id=self.id)
+        return followed.union(own).order_by(Post.timestamp.desc())
 
     def get_reset_password_token(self, expires_in=600):
-        return jwt.encode(dict(reset_password=self.id, exp=time() + expires_in), app.config['SECRET_KEY'],
-                          algorithm="HS256")
+        return jwt.encode({'reset_password': self.id, 'exp': time() + expires_in}, app.config['SECRET_KEY'],
+                          algorithm='HS256').decode('utf-8')
 
     @staticmethod
     def verify_reset_password_token(token):
@@ -72,6 +74,11 @@ class User(UserMixin, db.Model):
         return User.query.get(id)
 
 
+@login.user_loader
+def load_user(id):
+    return User.query.get(int(id))
+
+
 class Post(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     body = db.Column(db.String(140))
@@ -80,8 +87,3 @@ class Post(db.Model):
 
     def __repr__(self):
         return f'<Post {self.body}>'
-
-
-@login.user_loader
-def load_user(id):
-    return User.query.get(int(id))
